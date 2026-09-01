@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, redirect, jsonify
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'turnstool-dev-key')
@@ -88,6 +88,60 @@ def join():
         except sqlite3.IntegrityError:
             pass  # Ignore duplicate emails
     return render_template('index.html', joined=True)
+
+@app.route('/submit', methods=['POST'])
+def submit_entry():
+    """Adds a new submission to a category queue with a 60-minute lifespan."""
+    category_id = request.form.get('category_id')
+    title = request.form.get('title', '').strip()
+    author_name = request.form.get('author_name', '').strip()
+    content = request.form.get('content', '').strip()
+    
+    if not (category_id and title and author_name and content):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    # Calculate expiration 60 minutes from now
+    expires_at = datetime.utcnow() + timedelta(minutes=60)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO queue_entries (category_id, title, author_name, content, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (category_id, title, author_name, content, expires_at))
+    conn.commit()
+    conn.close()
+    
+    return redirect('/feed')
+
+@app.route('/feed', methods=['GET'])
+def view_feed():
+    """Fetches active items, automatically expiring works past their 60-minute window."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. Update status to 'expired' for any entry past its expiration timestamp
+    now = datetime.utcnow()
+    cursor.execute('''
+        UPDATE queue_entries 
+        SET status = 'expired' 
+        WHERE status = 'active' AND expires_at <= ?
+    ''', (now,))
+    conn.commit()
+    
+    # 2. Fetch active entries ordered by creation time (FIFO)
+    cursor.execute('''
+        SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
+        FROM queue_entries q
+        JOIN categories c ON q.category_id = c.id
+        WHERE q.status = 'active'
+        ORDER BY q.created_at ASC
+        LIMIT 10
+    ''')
+    active_entries = cursor.fetchall()
+    conn.close()
+    
+    return render_template('feed.html', entries=active_entries)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
