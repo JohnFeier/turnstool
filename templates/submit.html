@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Turnstool — Take the Stage</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; max-width: 650px; margin: 0 auto; padding: 40px 20px; }
+        h1 { color: #38bdf8; text-align: center; margin-bottom: 25px; }
+        .form-card { background: #1e293b; padding: 30px; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+        .field { margin-bottom: 20px; }
+        label { display: block; font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px; font-weight: bold; }
+        input[type="text"], select, textarea { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 1rem; box-sizing: border-box; }
+        textarea { height: 180px; resize: vertical; line-height: 1.5; }
+        button { background: #0284c7; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 1rem; width: 100%; }
+        button:hover { background: #0369a1; }
+    </style>
+</head>
+<body>
+    <h1>Take the Stage</h1>
+    <div class="form-card">
+        <form action="/submit" method="POST">
+            <div class="field">
+                <label for="category_id">Category</label>
+                <select name="category_id" id="category_id" required>
+                    {% for cat in categories %}
+                        <option value="{{ cat.id }}">{{ cat.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label for="author_name">Author Name / Pen Name</label>
+                <input type="text" name="author_name" id="author_name" placeholder="How should readers know you?" required>
+            </div>
+            <div class="field">
+                <label for="title">Work Title</label>
+                <input type="text" name="title" id="title" placeholder="Title of your piece" required>
+            </div>
+            <div class="field">
+                <label for="content">Work Content / Excerpt</label>
+                <textarea name="content" id="content" placeholder="Paste your story or poem here..." required></textarea>
+            </div>
+            <button type="submit">Publish to 1-Hour Stage</button>
+        </form>
+    </div>
+</body>
+</html>
