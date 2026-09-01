@@ -1,46 +1,146 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Turnstool — Take the Stage</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; max-width: 650px; margin: 0 auto; padding: 40px 20px; }
-        h1 { color: #38bdf8; text-align: center; margin-bottom: 25px; }
-        .form-card { background: #1e293b; padding: 30px; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
-        .field { margin-bottom: 20px; }
-        label { display: block; font-size: 0.9rem; color: #94a3b8; margin-bottom: 8px; font-weight: bold; }
-        input[type="text"], input[type="url"], select { width: 100%; padding: 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 1rem; box-sizing: border-box; }
-        button { background: #0284c7; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 1rem; width: 100%; }
-        button:hover { background: #0369a1; }
-    </style>
-</head>
-<body>
-    <h1>Take the Stage</h1>
-    <div class="form-card">
-        <form action="/submit" method="POST">
-            <div class="field">
-                <label for="category_id">Category</label>
-                <select name="category_id" id="category_id" required>
-                    {% for cat in categories %}
-                        <option value="{{ cat.id }}">{{ cat.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div class="field">
-                <label for="author_name">Author Name / Pen Name</label>
-                <input type="text" name="author_name" id="author_name" placeholder="How should readers know you?" required>
-            </div>
-            <div class="field">
-                <label for="title">Work Title</label>
-                <input type="text" name="title" id="title" placeholder="Title of your piece" required>
-            </div>
-            <div class="field">
-                <label for="content">Post a link to your work here</label>
-                <input type="url" name="content" id="content" placeholder="https://..." required>
-            </div>
-            <button type="submit">Publish to 1-Hour Stage</button>
-        </form>
-    </div>
-</body>
-</html>
+import os
+import sqlite3
+from datetime import datetime, timedelta
+from flask import Flask, render_template, request, redirect, jsonify
+
+app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'turnstool-dev-key')
+DB_FILE = 'waitlist.db'
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS waitlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            slug TEXT UNIQUE NOT NULL,
+            max_active_slots INTEGER DEFAULT 10
+        )
+    ''')
+    
+    cursor.execute('SELECT COUNT(*) FROM categories')
+    if cursor.fetchone()[0] == 0:
+        default_categories = [
+            ('Fiction', 'fiction', 10),
+            ('Non-Fiction', 'non-fiction', 10),
+            ('Poetry', 'poetry', 10),
+            ('Sci-Fi & Fantasy', 'sci-fi-fantasy', 10)
+        ]
+        cursor.executemany(
+            'INSERT INTO categories (name, slug, max_active_slots) VALUES (?, ?, ?)', 
+            default_categories
+        )
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS queue_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            author_name TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            status TEXT DEFAULT 'active',
+            FOREIGN KEY (category_id) REFERENCES categories (id)
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+
+init_db()
+
+@app.route('/', methods=['GET'])
+def index():
+    return render_template('index.html')
+
+@app.route('/join', methods=['POST'])
+def join():
+    email = request.form.get('email', '').strip()
+    if email:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('INSERT INTO waitlist (email) VALUES (?)', (email,))
+            conn.commit()
+            conn.close()
+        except sqlite3.IntegrityError:
+            pass
+    return render_template('index.html', joined=True)
+
+@app.route('/submit', methods=['GET'])
+def render_submit():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM categories ORDER BY name ASC')
+    categories = cursor.fetchall()
+    conn.close()
+    return render_template('submit.html', categories=categories)
+
+@app.route('/submit', methods=['POST'])
+def submit_entry():
+    category_id = request.form.get('category_id')
+    title = request.form.get('title', '').strip()
+    author_name = request.form.get('author_name', '').strip()
+    content = request.form.get('content', '').strip()
+    
+    if not (category_id and title and author_name and content):
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    expires_at = datetime.utcnow() + timedelta(minutes=60)
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO queue_entries (category_id, title, author_name, content, expires_at)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (category_id, title, author_name, content, expires_at))
+    conn.commit()
+    conn.close()
+    
+    return redirect('/feed')
+
+@app.route('/feed', methods=['GET'])
+def view_feed():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.utcnow()
+    cursor.execute('''
+        UPDATE queue_entries 
+        SET status = 'expired' 
+        WHERE status = 'active' AND expires_at <= ?
+    ''', (now,))
+    conn.commit()
+    
+    cursor.execute('''
+        SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
+        FROM queue_entries q
+        JOIN categories c ON q.category_id = c.id
+        WHERE q.status = 'active'
+        ORDER BY q.created_at ASC
+        LIMIT 10
+    ''')
+    active_entries = cursor.fetchall()
+    conn.close()
+    
+    return render_template('feed.html', entries=active_entries)
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
