@@ -9,7 +9,7 @@ DB_FILE = 'waitlist.db'
 
 def get_db_connection():
     conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row  # Returns dict-like rows for easy JSON/template usage
+    conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
@@ -17,7 +17,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Waitlist Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS waitlist (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +25,6 @@ def init_db():
         )
     ''')
     
-    # 2. Categories Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +34,6 @@ def init_db():
         )
     ''')
     
-    # Seed initial categories if empty
     cursor.execute('SELECT COUNT(*) FROM categories')
     if cursor.fetchone()[0] == 0:
         default_categories = [
@@ -50,7 +47,6 @@ def init_db():
             default_categories
         )
 
-    # 3. FIFO Queue Entries Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS queue_entries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +56,7 @@ def init_db():
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP NOT NULL,
-            status TEXT DEFAULT 'active', -- 'active', 'expired', 'queued'
+            status TEXT DEFAULT 'active',
             FOREIGN KEY (category_id) REFERENCES categories (id)
         )
     ''')
@@ -68,7 +64,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Initialize tables at boot
 init_db()
 
 @app.route('/', methods=['GET'])
@@ -86,8 +81,18 @@ def join():
             conn.commit()
             conn.close()
         except sqlite3.IntegrityError:
-            pass  # Ignore duplicate emails
+            pass
     return render_template('index.html', joined=True)
+
+@app.route('/submit', methods=['GET'])
+def render_submit():
+    """Renders the submission form populated with dynamic categories."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM categories ORDER BY name ASC')
+    categories = cursor.fetchall()
+    conn.close()
+    return render_template('submit.html', categories=categories)
 
 @app.route('/submit', methods=['POST'])
 def submit_entry():
@@ -100,7 +105,6 @@ def submit_entry():
     if not (category_id and title and author_name and content):
         return jsonify({'error': 'Missing required fields'}), 400
 
-    # Calculate expiration 60 minutes from now
     expires_at = datetime.utcnow() + timedelta(minutes=60)
     
     conn = get_db_connection()
@@ -120,7 +124,6 @@ def view_feed():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Update status to 'expired' for any entry past its expiration timestamp
     now = datetime.utcnow()
     cursor.execute('''
         UPDATE queue_entries 
@@ -129,7 +132,6 @@ def view_feed():
     ''', (now,))
     conn.commit()
     
-    # 2. Fetch active entries ordered by creation time (FIFO)
     cursor.execute('''
         SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
         FROM queue_entries q
