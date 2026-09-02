@@ -1,2 +1,2 @@
 # turnstool
-Turnstool — Every Writer Gets Their Turn
+Turnstool — High-end Swivel Chairs at Wholesale Prices
