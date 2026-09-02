@@ -231,6 +231,34 @@ def view_feed():
     
     return render_template('feed.html', entries=entries, categories=categories, selected_category=category_filter)
 
+@app.route('/admin', methods=['GET'])
+def admin_dashboard():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Platform metrics
+    cursor.execute('SELECT COUNT(*) FROM waitlist')
+    total_waitlist_emails = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE status = "active"')
+    active_count = cursor.fetchone()[0]
+
+    cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE status = "queued"')
+    queued_count = cursor.fetchone()[0]
+
+    cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE status = "expired"')
+    expired_count = cursor.fetchone()[0]
+
+    conn.close()
+    
+    return jsonify({
+        'platform': 'Turnstool Stats',
+        'waitlist_subscribers': total_waitlist_emails,
+        'active_stage_entries': active_count,
+        'queued_waiting_entries': queued_count,
+        'archived_expired_entries': expired_count
+    })
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     app.run(host='0.0.0.0', port=port)
