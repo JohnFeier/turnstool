@@ -143,6 +143,8 @@ def submit_entry():
 
 @app.route('/feed', methods=['GET'])
 def view_feed():
+    category_filter = request.args.get('category', 'all')
+    
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -158,9 +160,9 @@ def view_feed():
 
     # 2. Check each category for open slots and promote queued items
     cursor.execute('SELECT id, max_active_slots FROM categories')
-    categories = cursor.fetchall()
+    all_categories = cursor.fetchall()
     
-    for cat in categories:
+    for cat in all_categories:
         cat_id = cat['id']
         max_slots = cat['max_active_slots']
         
@@ -169,7 +171,6 @@ def view_feed():
         
         slots_needed = max_slots - active_count
         if slots_needed > 0:
-            # Fetch oldest queued items to promote
             cursor.execute('''
                 SELECT id FROM queue_entries 
                 WHERE category_id = ? AND status = 'queued' 
@@ -188,15 +189,30 @@ def view_feed():
     
     conn.commit()
     
-    # 3. Fetch active entries for display
-    cursor.execute('''
-        SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
-        FROM queue_entries q
-        JOIN categories c ON q.category_id = c.id
-        WHERE q.status = 'active'
-        ORDER BY q.created_at ASC
-    ''')
+    # 3. Fetch active entries (Filtered or All)
+    if category_filter != 'all':
+        cursor.execute('''
+            SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
+            FROM queue_entries q
+            JOIN categories c ON q.category_id = c.id
+            WHERE q.status = 'active' AND q.category_id = ?
+            ORDER BY q.created_at ASC
+        ''', (category_filter,))
+    else:
+        cursor.execute('''
+            SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
+            FROM queue_entries q
+            JOIN categories c ON q.category_id = c.id
+            WHERE q.status = 'active'
+            ORDER BY q.created_at ASC
+        ''')
+        
     raw_entries = cursor.fetchall()
+    
+    # Fetch all categories for the navigation header
+    cursor.execute('SELECT * FROM categories ORDER BY name ASC')
+    categories = cursor.fetchall()
+    
     conn.close()
     
     entries = []
@@ -208,7 +224,7 @@ def view_feed():
             entry['expires_iso'] = entry['expires_at'].isoformat() + 'Z'
         entries.append(entry)
     
-    return render_template('feed.html', entries=entries)
+    return render_template('feed.html', entries=entries, categories=categories, selected_category=category_filter)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
