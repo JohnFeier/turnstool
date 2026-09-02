@@ -54,8 +54,8 @@ def init_db():
             author_name TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP NOT NULL,
-            status TEXT DEFAULT 'active',
+            expires_at TIMESTAMP,
+            status TEXT DEFAULT 'active', -- 'active', 'expired', 'queued'
             FOREIGN KEY (category_id) REFERENCES categories (id)
         )
     ''')
@@ -102,14 +102,36 @@ def submit_entry():
     if not (category_id and title and author_name and content):
         return jsonify({'error': 'Missing required fields'}), 400
 
-    expires_at = datetime.utcnow() + timedelta(minutes=60)
-    
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO queue_entries (category_id, title, author_name, content, expires_at)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (category_id, title, author_name, content, expires_at))
+    
+    # Get max slots allowed for this category
+    cursor.execute('SELECT max_active_slots FROM categories WHERE id = ?', (category_id,))
+    cat_row = cursor.fetchone()
+    max_slots = cat_row['max_active_slots'] if cat_row else 10
+
+    # Count currently active slots
+    cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE category_id = ? AND status = "active"', (category_id,))
+    active_count = cursor.fetchone()[0]
+
+    now = datetime.utcnow()
+
+    if active_count < max_slots:
+        # Space available on stage: make active now
+        status = 'active'
+        expires_at = now + timedelta(minutes=60)
+        cursor.execute('''
+            INSERT INTO queue_entries (category_id, title, author_name, content, created_at, expires_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (category_id, title, author_name, content, now, expires_at, status))
+    else:
+        # Stage full: enter line as queued
+        status = 'queued'
+        cursor.execute('''
+            INSERT INTO queue_entries (category_id, title, author_name, content, created_at, expires_at, status)
+            VALUES (?, ?, ?, ?, ?, NULL, ?)
+        ''', (category_id, title, author_name, content, now, status))
+
     conn.commit()
     conn.close()
     
@@ -121,20 +143,54 @@ def view_feed():
     cursor = conn.cursor()
     
     now = datetime.utcnow()
+    
+    # 1. Expire entries past their 60-minute window
     cursor.execute('''
         UPDATE queue_entries 
         SET status = 'expired' 
         WHERE status = 'active' AND expires_at <= ?
     ''', (now,))
     conn.commit()
+
+    # 2. Check each category for open slots and promote queued items
+    cursor.execute('SELECT id, max_active_slots FROM categories')
+    categories = cursor.fetchall()
     
+    for cat in categories:
+        cat_id = cat['id']
+        max_slots = cat['max_active_slots']
+        
+        cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE category_id = ? AND status = "active"', (cat_id,))
+        active_count = cursor.fetchone()[0]
+        
+        slots_needed = max_slots - active_count
+        if slots_needed > 0:
+            # Fetch oldest queued items to promote
+            cursor.execute('''
+                SELECT id FROM queue_entries 
+                WHERE category_id = ? AND status = 'queued' 
+                ORDER BY created_at ASC 
+                LIMIT ?
+            ''', (cat_id, slots_needed))
+            queued_items = cursor.fetchall()
+            
+            for item in queued_items:
+                new_expires = now + timedelta(minutes=60)
+                cursor.execute('''
+                    UPDATE queue_entries 
+                    SET status = 'active', expires_at = ? 
+                    WHERE id = ?
+                ''', (new_expires, item['id']))
+    
+    conn.commit()
+    
+    # 3. Fetch active entries for display
     cursor.execute('''
         SELECT q.id, q.title, q.author_name, q.content, q.expires_at, c.name as category_name
         FROM queue_entries q
         JOIN categories c ON q.category_id = c.id
         WHERE q.status = 'active'
         ORDER BY q.created_at ASC
-        LIMIT 10
     ''')
     raw_entries = cursor.fetchall()
     conn.close()
