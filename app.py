@@ -113,6 +113,7 @@ def submit_entry():
     active_count = cursor.fetchone()[0]
 
     now = datetime.utcnow()
+    queue_position = None
 
     if active_count < max_slots:
         status = 'active'
@@ -120,6 +121,9 @@ def submit_entry():
     else:
         status = 'queued'
         expires_at = None
+        # Count how many items are already waiting in line ahead of this one
+        cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE category_id = ? AND status = "queued"', (category_id,))
+        queue_position = cursor.fetchone()[0] + 1
 
     cursor.execute('''
         INSERT INTO queue_entries (category_id, title, author_name, content, created_at, expires_at, status)
@@ -136,7 +140,8 @@ def submit_entry():
     submitted_entry = {
         'id': entry_id,
         'title': title,
-        'status': status
+        'status': status,
+        'queue_position': queue_position
     }
 
     return render_template('submit.html', categories=categories, submitted_entry=submitted_entry)
