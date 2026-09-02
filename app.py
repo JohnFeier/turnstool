@@ -105,37 +105,41 @@ def submit_entry():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Get max slots allowed for this category
     cursor.execute('SELECT max_active_slots FROM categories WHERE id = ?', (category_id,))
     cat_row = cursor.fetchone()
     max_slots = cat_row['max_active_slots'] if cat_row else 10
 
-    # Count currently active slots
     cursor.execute('SELECT COUNT(*) FROM queue_entries WHERE category_id = ? AND status = "active"', (category_id,))
     active_count = cursor.fetchone()[0]
 
     now = datetime.utcnow()
 
     if active_count < max_slots:
-        # Space available on stage: make active now
         status = 'active'
         expires_at = now + timedelta(minutes=60)
-        cursor.execute('''
-            INSERT INTO queue_entries (category_id, title, author_name, content, created_at, expires_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (category_id, title, author_name, content, now, expires_at, status))
     else:
-        # Stage full: enter line as queued
         status = 'queued'
-        cursor.execute('''
-            INSERT INTO queue_entries (category_id, title, author_name, content, created_at, expires_at, status)
-            VALUES (?, ?, ?, ?, ?, NULL, ?)
-        ''', (category_id, title, author_name, content, now, status))
+        expires_at = None
 
+    cursor.execute('''
+        INSERT INTO queue_entries (category_id, title, author_name, content, created_at, expires_at, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (category_id, title, author_name, content, now, expires_at, status))
+    
+    entry_id = cursor.lastrowid
     conn.commit()
+
+    cursor.execute('SELECT * FROM categories ORDER BY name ASC')
+    categories = cursor.fetchall()
     conn.close()
     
-    return redirect('/feed')
+    submitted_entry = {
+        'id': entry_id,
+        'title': title,
+        'status': status
+    }
+
+    return render_template('submit.html', categories=categories, submitted_entry=submitted_entry)
 
 @app.route('/feed', methods=['GET'])
 def view_feed():
