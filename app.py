@@ -136,10 +136,19 @@ def view_feed():
         ORDER BY q.created_at ASC
         LIMIT 10
     ''')
-    active_entries = cursor.fetchall()
+    raw_entries = cursor.fetchall()
     conn.close()
     
-    return render_template('feed.html', entries=active_entries)
+    entries = []
+    for row in raw_entries:
+        entry = dict(row)
+        if isinstance(entry['expires_at'], str):
+            entry['expires_iso'] = entry['expires_at'].replace(' ', 'T') + 'Z'
+        else:
+            entry['expires_iso'] = entry['expires_at'].isoformat() + 'Z'
+        entries.append(entry)
+    
+    return render_template('feed.html', entries=entries)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
