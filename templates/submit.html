@@ -22,11 +22,19 @@
     <h1>Take the Stage</h1>
 
     {% if submitted_entry %}
-        <div class="success-card">
-            <h3>🎉 Work Published to Stage!</h3>
-            <p><strong>"{{ submitted_entry.title }}"</strong> is now active in the 1-hour FIFO queue.</p>
-            <a href="/feed#entry-{{ submitted_entry.id }}" class="btn-view">View Live Entry on Feed ↗</a>
-        </div>
+        {% if submitted_entry.status == 'active' %}
+            <div class="success-card">
+                <h3>🎉 Work Published Live on Stage!</h3>
+                <p><strong>"{{ submitted_entry.title }}"</strong> is now live in the 1-hour FIFO queue.</p>
+                <a href="/feed#entry-{{ submitted_entry.id }}" class="btn-view">View Live Entry on Feed ↗</a>
+            </div>
+        {% else %}
+            <div class="success-card" style="background: #1e3a8a; border-color: #3b82f6; color: #bfdbfe;">
+                <h3 style="color: #60a5fa;">⏳ Added to Stage Waitlist</h3>
+                <p><strong>"{{ submitted_entry.title }}"</strong> is currently <strong>#{{ submitted_entry.queue_position }}</strong> in line for this category.</p>
+                <p style="font-size: 0.9rem;">It will automatically promote to the main stage as soon as an active slot opens up!</p>
+            </div>
+        {% endif %}
     {% endif %}
 
     <div class="form-card">
